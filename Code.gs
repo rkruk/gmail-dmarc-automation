@@ -1,4 +1,14 @@
-const spreadsheetId = "YOUR_SPREADSHEET_ID_HERE"; // The ID must be changed to the spredsheet ID used for DMARC tool (https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID_HERE/edit?)
+/**
+ * Google Apps Script: Fully Automated DMARC Report Processor
+ * Processes DMARC aggregate reports from Gmail, parses XML/ZIP/GZ, appends to Google Sheets,
+ * generates summaries and charts, exports CSVs, and cleans up processed emails.
+ * See README.md for setup and usage instructions.
+ * 
+ * Version: 1.0.7 | Last updated: 2025-05-28
+ */
+
+// IMPORTANT: Replace "YOUR_SPREADSHEET_ID_HERE" with your actual Google Sheet ID.
+const spreadsheetId = "YOUR_SPREADSHEET_ID_HERE"; // The ID must be changed to the spreadsheet 
 
 /**
  * Main function: Process DMARC reports from Gmail, parse attachments,
