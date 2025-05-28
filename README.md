@@ -31,7 +31,7 @@ This Google Apps Script automates the entire workflow of collecting, parsing, st
 
 - A Google account with access to Gmail and Google Drive
 - A Google Sheet to store DMARC data (create a new one or use an existing one)
-- Basic familiarity with Google Apps Script (for setup)
+- Basic familiarity with Google Apps Script: .gs (for setup)
 
 ---
 
