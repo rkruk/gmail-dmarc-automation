@@ -134,9 +134,37 @@ This Google Apps Script automates the entire workflow of collecting, parsing, st
 
 ---
 
+## Quotas & Limits
+
+Google Apps Script and related Google services (Gmail, Sheets, Drive) have daily quotas and limits. For most users, these are sufficient for typical DMARC report processing, but heavy use or large volumes may hit these limits. If a quota is exceeded, the script will pause until the next day.
+
+**Key quotas (as of May 2025, subject to change):**
+- **Gmail:**
+  - Read/modify: ~1,500 messages/day (consumer), higher for Workspace
+  - Sending emails: 100/day (consumer), 1,500/day (Workspace)
+- **Google Sheets:**
+  - Write cells: 50,000,000 cells/day
+  - Read cells: 100,000,000 cells/day
+  - Calls to SpreadsheetApp: 90 minutes/day
+- **Google Drive:**
+  - Create files: 2100/day
+  - Write operations: 10,000/day
+- **Apps Script total runtime:**
+  - 6 minutes per execution (consumer), 30 minutes (Workspace)
+  - 90 minutes total script runtime per day (consumer), 6 hours (Workspace)
+
+See the [official quotas documentation](https://developers.google.com/apps-script/guides/services/quotas) for the latest details and Workspace-specific limits.
+
+**Note:**
+- If you exceed a quota, the script will stop and resume the next day.
+- For most domains, DMARC report volume is well within free quotas.
+- Large organizations or high-volume domains may need a Google Workspace account for higher limits.
+  
+---
+
 ## Credits
 
-- Inspired by the need for a truly hands-off, robust DMARC automation tool for Google Workspace users.
+Inspired by the need for a truly hands-off, robust DMARC automation tool for Google Workspace users.
 
 ---
 
