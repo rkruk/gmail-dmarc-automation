@@ -45,7 +45,7 @@ This Google Apps Script automates the entire workflow of collecting, parsing, st
 - Open your Google Sheet.
 - Go to **Extensions → Apps Script**.
 - Paste the entire script into the editor, replacing any existing code.
-- At the top of the script, set the `spreadsheetId` variable to your Sheet's ID (The ID must be changed to the spredsheet ID used for DMARC tool (https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID_HERE/edit?)):
+- At the top of the script, set the `spreadsheetId` variable to your Sheet's ID (The ID must be changed to the spredsheet ID used for DMARC tool: [https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID_HERE/edit?](https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID_HERE/edit?):
   ```js
   const spreadsheetId = "YOUR_SPREADSHEET_ID_HERE";
   ```
