@@ -6,22 +6,34 @@
 This Google Apps Script automates the entire workflow of collecting, parsing, storing, summarizing, and archiving DMARC aggregate reports received via email. It is designed for domain administrators, security teams, and anyone who needs to process DMARC XML reports at scale, with zero manual intervention.
 
 **Key Features:**
-- Automatically labels and processes all new DMARC report emails in Gmail
+- Fully hands-off: zero manual steps after setup
+- Automatically labels, processes, and archives all DMARC report emails in Gmail
 - Robustly extracts and parses DMARC XML data (including from ZIP/GZ attachments)
-- Appends processed data to a Google Sheet
-- Generates a professional summary sheet with charts and tables
-- Exports monthly CSV archives to Google Drive
-- Cleans up processed emails after 7 days
-- Fully automated via time-driven triggers
+- Deduplicates reports to prevent double-processing
+- Stores parsed data in a Google Sheet ("DMARC Reports" tab)
+- Enriches data with country (GeoIP) and plain-language failure reason
+- Provides a professional "Summary" sheet with actionable, enterprise-level reporting, including:
+  - Aggregated tables (by org, IP, domain)
+  - DKIM/SPF pass/fail rates
+  - Dynamic, well-placed charts
+  - Date-range and multi-month filtering
+  - Drill-down hyperlinks for quick investigation
+- "Dashboard" sheet with KPIs and trendline charts
+- "Config" sheet for report recipients and retention settings
+- "Help" sheet with usage and glossary
+- Monthly archiving to new sheets and automatic CSV export to Google Drive
+- Scheduled PDF summary report sent via email to recipients
+- Cleans up processed emails after 7 days and purges old data per retention policy
+- No logos or branding images for a clean, professional look
+- Easy to deploy and use for non-technical stakeholders
 
 ---
 
 ## Why Use This Script?
 
-- **No manual steps:** All DMARC report handling is fully automated.
-- **Handles real-world DMARC formats:** Supports .xml, .zip, and .gz attachments from all major DMARC senders.
-- **Deduplication:** Never processes the same report twice.
-- **Professional reporting:** Summary sheet with charts for quick insights.
+- **Truly automated:** All DMARC report handling is fully automated, including enrichment, archiving, and reporting.
+- **Enterprise-ready:** Summary and dashboard provide actionable insights for security and compliance.
+- **No logo/branding clutter:** Clean, professional, and organization-neutral.
 - **Mailbox hygiene:** Automatically deletes processed emails after 7 days.
 - **Easy to deploy:** Just copy, configure, and set up triggers.
 
@@ -97,26 +109,35 @@ All incoming DMARC report emails will be labeled as `DMARC` and automatically ar
 1. **Labeling:**
    - The script auto-labels new DMARC emails (with .xml/.zip/.gz attachments) as `DMARC`.
 2. **Processing:**
-   - It processes all labeled emails, extracts and parses DMARC XML data, and appends the results to the "DMARC Reports" sheet.
-   - Deduplication ensures each report is only processed once.
+   - It processes all labeled emails, extracts and parses DMARC XML data, deduplicates, and appends the results to the "DMARC Reports" sheet.
+   - Data is enriched with country (GeoIP) and plain-language failure reason.
    - After processing, emails are moved to the `DMARC/Processed` label and archived.
 3. **Summary & Charts:**
-   - The script updates a "Summary" sheet with aggregated data and professional charts.
-4. **CSV Export:**
-   - Each month, a CSV archive of that month's data is saved to a `DMARC Archives` folder in Google Drive.
-5. **Cleanup:**
-   - Processed emails older than 7 days are automatically deleted from Gmail.
+   - The script updates a "Summary" sheet with aggregated data, dynamic charts, date-range filtering, and drill-down links.
+4. **Dashboard:**
+   - The "Dashboard" sheet provides KPIs and trendline charts for high-level monitoring.
+5. **Config & Help:**
+   - The "Config" sheet manages report recipients and retention settings. The "Help" sheet provides usage and glossary.
+6. **Archiving & Export:**
+   - Each month, data is archived to a new sheet and a CSV is exported to a `DMARC Archives` folder in Google Drive.
+7. **Scheduled Reporting:**
+   - A PDF summary is generated and emailed to recipients on a schedule.
+8. **Cleanup:**
+   - Processed emails older than 7 days are deleted. Data older than the retention period is purged.
 
 ---
 
-## Script Functions
+## Script Functions (Key)
 
 - `autoLabelDMARCReports()`: Labels new DMARC emails in Gmail.
-- `processDMARCReports()`: Processes all labeled DMARC emails, parses attachments, appends data, updates summary, and exports CSV.
+- `processDMARCReports()`: Processes all labeled DMARC emails, parses attachments, appends data, enriches, updates summary, dashboard, and exports CSV.
 - `autoLabelAndProcessDMARCReports()`: Runs both labeling and processing in one go (set this as your main daily trigger).
 - `deleteOldProcessedDMARCEmails()`: Deletes processed DMARC emails older than 7 days (set as a daily trigger).
-- `onOpen()`: Adds a custom menu to the Google Sheet for manual processing.
-- Utility/test functions: `colorTabsTest()`, `listSheetNames()`.
+- `setupConfigSheet()`, `setupHelpSheet()`, `setupDashboardSheet()`: Create and update Config, Help, and Dashboard sheets.
+- `purgeOldDMARCData()`: Purges data older than retention period.
+- `addDrillDownLinksToSummary()`: Adds drill-down hyperlinks in Summary.
+- `sendScheduledDMARCReport()`: Exports Summary as PDF and emails to recipients.
+- `applyBranding()`: Applies font/color styling (no logo logic).
 
 ---
 
@@ -125,15 +146,31 @@ All incoming DMARC report emails will be labeled as `DMARC` and automatically ar
 - **Change the DMARC label name:** Edit the `labelName` variable in the script if you use a different label.
 - **Change the processed label name:** Edit the `processedLabelName` variable.
 - **Change the threshold for DKIM/SPF failure alerts:** Edit the `thresholdFailures` variable.
-- **Change the retention period:** Edit the `older_than:7d` in `deleteOldProcessedDMARCEmails()` if you want a different retention period.
+- **Change the retention period:** Edit the value in the Config sheet ("Retention Months").
+- **Change report recipients:** Edit the value in the Config sheet ("Report Recipients").
 
 ---
 
 ## Security & Privacy
 
 - The script only processes emails with the specified label and attachments.
-- All extracted data is stored in your Google Sheet and Drive; nothing is sent externally.
+- All extracted data is stored in your Google Sheet and Drive; nothing is sent externally (except for GeoIP lookups, see below).
 - You can review and audit all code and logs in Apps Script.
+
+---
+
+## GeoIP Enrichment & Rate Limits
+
+- The script enriches DMARC data with country information using the free [ip-api.com](http://ip-api.com/) GeoIP service.
+- **ip-api.com free tier is limited to 45 requests per minute and 15,000 requests per day per IP address.**
+- For most organizations, this is sufficient. If you process very high volumes, you may hit this limit and some country lookups will return "Unknown".
+- No API key is required for the free tier. Data is sent only for IP address lookups (country field only).
+- If you exceed the per-minute or daily limit, the script will not fail, but some rows will have "Unknown" for country. The next day, enrichment will resume for new IPs.
+- **How to estimate your usage:** One lookup is made per unique IP address in your DMARC data per run. If the same IP appears in multiple reports, it is only enriched once (unless you clear the "Country" column). Most organizations see tens to a few hundred unique IPs per day. Large organizations or those under attack may see thousands.
+- **If you process a backlog or a large batch:** You may hit the per-minute limit (45/minute). The script will enrich as many as possible, and the rest will show "Unknown" for country in that run.
+- **If you process thousands of new unique IPs every day:** You may hit the daily limit (15,000/day). Again, the script will show "Unknown" for any IPs over the limit.
+- For higher limits or guaranteed service, consider a paid ip-api.com plan or alternative GeoIP provider (see script for where to modify). Providers like ipinfo.io, ipdata.co, ipgeolocation.io, and MaxMind offer higher limits and/or batch lookups.
+- The script is resilient: all DMARC data is still processed and reported, even if some country lookups are not available.
 
 ---
 
