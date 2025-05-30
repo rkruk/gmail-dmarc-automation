@@ -1,14 +1,4 @@
-/**
- * Google Apps Script: Fully Automated DMARC Report Processor
- * Processes DMARC aggregate reports from Gmail, parses XML/ZIP/GZ, appends to Google Sheets,
- * generates summaries and charts, exports CSVs, and cleans up processed emails.
- * See README.md for setup and usage instructions.
- * 
- * Version: 1.0.7 | Last updated: 2025-05-28
- */
-
-// IMPORTANT: Replace "YOUR_SPREADSHEET_ID_HERE" with your actual Google Sheet ID.
-const spreadsheetId = "YOUR_SPREADSHEET_ID_HERE"; // The ID must be changed to the spreadsheet 
+const spreadsheetId = "YOUR_SPREADSHEET_ID_HERE";
 
 /**
  * Main function: Process DMARC reports from Gmail, parse attachments,
@@ -22,12 +12,21 @@ function processDMARCReports() {
   const thresholdFailures = 3;
 
   try {
+    // --- Always ensure all setup and branding is up to date ---
+    setupConfigSheet(); // Ensures Config exists and is correct
+    setupHelpSheet();   // Ensures Help tab exists
+    setupDashboardSheet(); // Ensures Dashboard exists and is up to date
+
     const processedLabel = getOrCreateLabel(processedLabelName);
     const ss = SpreadsheetApp.openById(spreadsheetId);
     Logger.log("Spreadsheet loaded: " + (ss ? "yes" : "no"));
     if (!ss) {
       throw new Error("Could not open spreadsheet. Check spreadsheetId and permissions.");
     }
+
+    // Automatically archive last month's data before processing new reports
+    archiveLastMonthDMARCData(ss, sheetName);
+
     const sheet = getOrCreateSheet(ss, sheetName, [
       "Message ID", "Reporter", "Source IP", "Disposition",
       "DKIM", "SPF", "Domain", "Header From", "Count", "Processed Date"
@@ -143,16 +142,23 @@ function processDMARCReports() {
     // Update summary sheet with charts and formatting
     updateDMARCSummary(ss);
 
-    // Color the tabs for visibility
-    try {
-      ss.getSheetByName("DMARC Reports").setTabColor("#4285F4"); // Google blue
-    } catch (e) {}
-    try {
-      ss.getSheetByName("Summary").setTabColor("#34A853"); // Google green
-    } catch (e) {}
-
     // Export monthly CSV archive
     exportMonthlyCSV(ss, sheetName);
+
+    // Enrich DMARC Reports with Country and Failure Reason columns
+    enrichDMARCReportsWithGeoAndReason();
+
+    // Purge old data according to Config
+    purgeOldDMARCData();
+
+    // Add drill-down links to summary
+    addDrillDownLinksToSummary();
+
+    // --- Always apply branding and logo automatically ---
+    applyBranding();
+
+    // --- Scheduled report (if on trigger) ---
+    sendScheduledDMARCReport();
 
   } catch (err) {
     Logger.log("Error in processDMARCReports: " + err);
@@ -187,114 +193,64 @@ function getOrCreateSheet(ss, name, headers) {
     sheet.clear();
     sheet.appendRow(headers);
   }
-  // Always ensure header formatting is present
-  sheet.getRange(1, 1, 1, headers.length).setBackground("#b7e1cd").setFontWeight("bold");
+  // Always ensure header formatting is present for all columns (including new ones)
+  var headerCols = sheet.getLastColumn();
+  var headerRange = sheet.getRange(1, 1, 1, headerCols);
+  headerRange.clearFormat(); // Remove all previous formatting
+  headerRange.setBackground("#b7e1cd");
+  headerRange.setFontWeight("bold");
+  headerRange.setFontColor("#000000");
+  headerRange.setFontSize(10);
+
+  // Ensure all data columns (including new ones) have consistent number formatting and alignment
+  for (var col = 1; col <= sheet.getLastColumn(); col++) {
+    sheet.setColumnWidth(col, 120); // Set a reasonable default width for all columns
+    sheet.getRange(1, col, sheet.getLastRow()).setHorizontalAlignment("left");
+    sheet.getRange(1, col, sheet.getLastRow()).setVerticalAlignment("middle");
+    // Optionally, auto-resize columns for content
+    sheet.autoResizeColumn(col);
+  }
   return sheet;
 }
 
 /**
- * Update or create the summary sheet with aggregated data,
- * colored formatting and charts for better visualization
+ * Archive last month's DMARC data to a new sheet and keep only current month's data in DMARC Reports
+ * Call this at the start of each month (e.g. in your main trigger)
  */
-function updateDMARCSummary(ss) {
-  if (!ss) return;
-
-  const rawSheet = ss.getSheetByName("DMARC Reports");
-  if (!rawSheet) return;
-
-  let summarySheet = ss.getSheetByName("Summary");
-  if (!summarySheet) {
-    summarySheet = ss.insertSheet("Summary");
-  } else {
-    summarySheet.clear();
-    const charts = summarySheet.getCharts();
-    charts.forEach(chart => summarySheet.removeChart(chart));
-  }
-
-  const data = rawSheet.getDataRange().getValues();
-  if (data.length < 2) {
-    // Still create headers and style if no data
-    summarySheet.getRange("A1:B1").setValues([["Reporting Org", "Report Count"]]);
-    summarySheet.getRange("A1:B1").setBackground("#b7e1cd").setFontWeight("bold");
-    summarySheet.getRange("D1").setValue("No DMARC data available");
-    return;
-  }
-
+function archiveLastMonthDMARCData(ss, sheetName) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return;
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return; // No data
   const headers = data[0];
-  const orgIndex = headers.indexOf("Reporter");
-  const ipIndex = headers.indexOf("Source IP");
-  const dkimIndex = headers.indexOf("DKIM");
-  const spfIndex = headers.indexOf("SPF");
-
-  // Aggregate counts by org and failing IPs
-  const orgMap = {};
-  const failMap = {};
-
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const org = row[orgIndex];
-    const ip = row[ipIndex];
-    const dkim = row[dkimIndex];
-    const spf = row[spfIndex];
-
-    orgMap[org] = (orgMap[org] || 0) + 1;
-
-    if (dkim !== "pass" || spf !== "pass") {
-      failMap[ip] = (failMap[ip] || 0) + 1;
+  const dateCol = headers.length - 1;
+  const now = new Date();
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthNum = lastMonth.getMonth();
+  const lastMonthYear = lastMonth.getFullYear();
+  // Filter last month's data
+  const lastMonthRows = data.filter(function(row, i) {
+    if (i === 0) return false;
+    const date = new Date(row[dateCol]);
+    return date.getMonth() === lastMonthNum && date.getFullYear() === lastMonthYear;
+  });
+  if (lastMonthRows.length === 0) return;
+  // Create or get archive sheet
+  const archiveSheetName = `${lastMonthYear}-${String(lastMonthNum + 1).padStart(2, "0")}`;
+  let archiveSheet = ss.getSheetByName(archiveSheetName);
+  if (!archiveSheet) {
+    archiveSheet = ss.insertSheet(archiveSheetName);
+    archiveSheet.appendRow(headers);
+  }
+  // Append last month's rows to archive sheet
+  archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, lastMonthRows.length, headers.length)
+    .setValues(lastMonthRows);
+  // Remove last month's rows from main sheet
+  for (let i = data.length - 1; i > 0; i--) {
+    const date = new Date(data[i][dateCol]);
+    if (date.getMonth() === lastMonthNum && date.getFullYear() === lastMonthYear) {
+      sheet.deleteRow(i + 1);
     }
-  }
-
-  // Write Reporting Orgs summary
-  summarySheet.getRange("A1:B1").setValues([["Reporting Org", "Report Count"]]);
-  const orgEntries = Object.entries(orgMap).sort((a, b) => b[1] - a[1]);
-  if (orgEntries.length) {
-    summarySheet.getRange(2, 1, orgEntries.length, 2).setValues(orgEntries);
-    // Add borders to org summary
-    summarySheet.getRange(1, 1, orgEntries.length + 1, 2).setBorder(true, true, true, true, true, true);
-  }
-  // Color header row
-  summarySheet.getRange("A1:B1").setBackground("#b7e1cd").setFontWeight("bold");
-
-  // Write Failing IP summary
-  const startRow = orgEntries.length + 4;
-  summarySheet.getRange(startRow, 1, 1, 2).setValues([["Failing IP", "Failure Count"]]);
-  const failEntries = Object.entries(failMap).sort((a, b) => b[1] - a[1]);
-  if (failEntries.length) {
-    summarySheet.getRange(startRow + 1, 1, failEntries.length, 2).setValues(failEntries);
-    // Add borders to fail summary
-    summarySheet.getRange(startRow, 1, failEntries.length + 1, 2).setBorder(true, true, true, true, true, true);
-  }
-  summarySheet.getRange(startRow, 1, 1, 2).setBackground("#f4cccc").setFontWeight("bold");
-
-  // Place charts as floating objects above the grid, do not expand any row/column
-  const pieChartCellRow = 2;
-  const pieChartCellCol = 5; // Column E
-  const barChartCellRow = 16;
-  const barChartCellCol = 5; // Column E
-  summarySheet.getRange(pieChartCellRow, pieChartCellCol).setValue("Report Counts by Org").setFontWeight("bold").setFontSize(12);
-  summarySheet.getRange(barChartCellRow, barChartCellCol).setValue("Top Failing IPs").setFontWeight("bold").setFontSize(12);
-
-  if (orgEntries.length > 0) {
-    const pieChartRange = summarySheet.getRange("A1:B" + (orgEntries.length + 1));
-    const pieChart = summarySheet.newChart()
-      .setChartType(Charts.ChartType.PIE)
-      .addRange(pieChartRange)
-      .setPosition(pieChartCellRow + 1, pieChartCellCol, 0, 0) // E3
-      .setOption('title', '')
-      .build();
-    summarySheet.insertChart(pieChart);
-    // Do NOT set row/column height
-  }
-  if (failEntries.length > 0) {
-    const barChartRange = summarySheet.getRange(startRow, 1, Math.min(6, failEntries.length + 1), 2);
-    const barChart = summarySheet.newChart()
-      .setChartType(Charts.ChartType.BAR)
-      .addRange(barChartRange)
-      .setPosition(barChartCellRow + 1, barChartCellCol, 0, 0) // E17
-      .setOption('title', '')
-      .build();
-    summarySheet.insertChart(barChart);
-    // Do NOT set row/column height
   }
 }
 
@@ -391,15 +347,6 @@ function autoLabelAndProcessDMARCReports() {
 }
 
 /**
- * Test function to color the tabs of the spreadsheet
- */
-function colorTabsTest() {
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  ss.getSheetByName("DMARC Reports").setTabColor("#4285F4");
-  ss.getSheetByName("Summary").setTabColor("#34A853");
-}
-
-/**
  * List all sheet names in the active spreadsheet
  */
 function listSheetNames() {
@@ -417,5 +364,509 @@ function deleteOldProcessedDMARCEmails() {
   var threads = GmailApp.search('label:"DMARC/Processed" older_than:7d');
   threads.forEach(function(thread) {
     thread.moveToTrash();
+  });
+}
+
+/**
+ * Aggregate DMARC data from all archive sheets and the current sheet for enterprise-level reporting
+ * Returns an array of all rows (with headers)
+ */
+function getAllDMARCData(ss, mainSheetName) {
+  const sheets = ss.getSheets();
+  let allData = [];
+  let headers = null;
+  sheets.forEach(function(sheet) {
+    const name = sheet.getName();
+    if (name === mainSheetName || /^\d{4}-\d{2}$/.test(name)) {
+      const data = sheet.getDataRange().getValues();
+      if (data.length < 2) return;
+      if (!headers) headers = data[0];
+      allData = allData.concat(data.slice(1));
+    }
+  });
+  return headers ? [headers].concat(allData) : [];
+}
+
+/**
+ * Update or create the summary sheet with aggregated data,
+ * colored formatting and charts for better visualization
+ * Allows filtering by date range if D1 cell is set (format: YYYY-MM-DD:YYYY-MM-DD)
+ * If D2 cell is set to 'ALL', aggregates across all archive sheets and current
+ */
+function updateDMARCSummary(ss) {
+  if (!ss) return;
+  let summarySheet = ss.getSheetByName("Summary");
+  if (!summarySheet) {
+    summarySheet = ss.insertSheet("Summary");
+  } else {
+    summarySheet.clear();
+    const charts = summarySheet.getCharts();
+    charts.forEach(function(chart) { summarySheet.removeChart(chart); });
+  }
+
+  // --- Data Preparation ---
+  // Date range filter (optional)
+  let dateRange = summarySheet.getRange("C2").getValue();
+  let useAll = summarySheet.getRange("C3").getValue();
+  let data;
+  if (useAll && useAll.toString().toUpperCase() === 'ALL') {
+    data = getAllDMARCData(ss, "DMARC Reports");
+  } else {
+    const rawSheet = ss.getSheetByName("DMARC Reports");
+    if (!rawSheet) return;
+    data = rawSheet.getDataRange().getValues();
+  }
+  if (!data || data.length < 2) {
+    summarySheet.getRange("B5:C5").setValues([["Reporting Org", "Report Count"]]);
+    summarySheet.getRange("B5:C5").setBackground("#b7e1cd").setFontWeight("bold");
+    summarySheet.getRange("C2").setValue("No DMARC data available");
+    return;
+  }
+  // Filter by date range if set
+  if (dateRange && typeof dateRange === "string" && dateRange.includes(":")) {
+    const [start, end] = dateRange.split(":");
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    const dateCol = data[0].length - 1;
+    data = [data[0]].concat(data.slice(1).filter(function(row) {
+      const d = new Date(row[dateCol]);
+      return d >= startDate && d <= endDate;
+    }));
+  }
+  const headers = data[0];
+  const orgIndex = headers.indexOf("Reporter");
+  const ipIndex = headers.indexOf("Source IP");
+  const dkimIndex = headers.indexOf("DKIM");
+  const spfIndex = headers.indexOf("SPF");
+  // Aggregate counts by org and failing IPs
+  const orgMap = {};
+  const failMap = {};
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const org = row[orgIndex];
+    const ip = row[ipIndex];
+    const dkim = row[dkimIndex];
+    const spf = row[spfIndex];
+    orgMap[org] = (orgMap[org] || 0) + 1;
+    if (dkim !== "pass" || spf !== "pass") {
+      failMap[ip] = (failMap[ip] || 0) + 1;
+    }
+  }
+  const orgEntries = Object.entries(orgMap).sort(function(a, b) { return b[1] - a[1]; });
+  const failEntries = Object.entries(failMap).sort(function(a, b) { return b[1] - a[1]; });
+
+  // --- Additional Analysis Section ---
+  // 1. Top sending domains (from 'Domain' column)
+  const domainIndex = headers.indexOf("Domain");
+  const domainMap = {};
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const domain = row[domainIndex];
+    if (domain) domainMap[domain] = (domainMap[domain] || 0) + 1;
+  }
+  const domainEntries = Object.entries(domainMap).sort((a, b) => b[1] - a[1]);
+
+  // 2. Pass/fail rates (DKIM, SPF)
+  let dkimPass = 0, dkimFail = 0, spfPass = 0, spfFail = 0;
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (row[dkimIndex] === "pass") dkimPass++; else dkimFail++;
+    if (row[spfIndex] === "pass") spfPass++; else spfFail++;
+  }
+
+  // --- Professional Summary Layout ---
+  // Section: Controls (move to top left, but do not display as data)
+  summarySheet.getRange("B1").setValue("Controls:").setFontWeight("bold").setFontSize(11);
+  summarySheet.getRange("B2").setValue("Date Range (YYYY-MM-DD:YYYY-MM-DD)").setFontWeight("bold").setBackground("#e3e3e3");
+  summarySheet.getRange("C2").setValue("").setNote("Enter a date range here, e.g. 2025-05-01:2025-05-30. Leave blank for all dates.");
+  summarySheet.getRange("B3").setValue("Type 'ALL' to aggregate all months").setFontWeight("bold").setBackground("#e3e3e3");
+  summarySheet.getRange("C3").setValue("").setNote("Type ALL to aggregate all months of data, or leave blank for current month only.");
+  summarySheet.getRange("B1:C3").setBorder(true, true, true, true, true, true).setBackground("#f9f9f9");
+
+  // Section: Reporting Org Table
+  let rowPtr = 5;
+  summarySheet.getRange(rowPtr, 2, 1, 2).setValues([["Reporting Org", "Report Count"]]);
+  summarySheet.getRange(rowPtr, 2, 1, 2).setBackground("#b7e1cd").setFontWeight("bold");
+  if (orgEntries.length) {
+    summarySheet.getRange(rowPtr + 1, 2, orgEntries.length, 2).setValues(orgEntries);
+    summarySheet.getRange(rowPtr, 2, orgEntries.length + 1, 2).setBorder(true, true, true, true, true, true);
+  }
+  rowPtr += orgEntries.length + 3;
+
+  // Section: Failing IP Table
+  summarySheet.getRange(rowPtr, 2, 1, 2).setValues([["Failing IP", "Failure Count"]]);
+  summarySheet.getRange(rowPtr, 2, 1, 2).setBackground("#f4cccc").setFontWeight("bold");
+  if (failEntries.length) {
+    summarySheet.getRange(rowPtr + 1, 2, failEntries.length, 2).setValues(failEntries);
+    summarySheet.getRange(rowPtr, 2, failEntries.length + 1, 2).setBorder(true, true, true, true, true, true);
+  }
+  rowPtr += failEntries.length + 3;
+
+  // Section: Top Sending Domains
+  if (domainEntries.length) {
+    summarySheet.getRange(rowPtr, 2, 1, 2).setValues([["Top Sending Domain", "Count"]]);
+    summarySheet.getRange(rowPtr, 2, 1, 2).setBackground("#cfe2f3").setFontWeight("bold");
+    summarySheet.getRange(rowPtr + 1, 2, domainEntries.length, 2).setValues(domainEntries);
+    summarySheet.getRange(rowPtr, 2, domainEntries.length + 1, 2).setBorder(true, true, true, true, true, true);
+    rowPtr += domainEntries.length + 3;
+  }
+
+  // Section: DKIM/SPF Pass/Fail Table
+  summarySheet.getRange(rowPtr, 2, 1, 4).setValues([["DKIM Pass", "DKIM Fail", "SPF Pass", "SPF Fail"]]);
+  summarySheet.getRange(rowPtr, 2, 1, 4).setBackground("#ffe599").setFontWeight("bold");
+  summarySheet.getRange(rowPtr + 1, 2, 1, 4).setValues([[dkimPass, dkimFail, spfPass, spfFail]]);
+  summarySheet.getRange(rowPtr, 2, 2, 4).setBorder(true, true, true, true, true, true);
+  rowPtr += 4;
+
+  // --- Chart Placement (dynamic, non-overlapping, right side) ---
+  // Use only row-based positioning for titles and charts, not pixel offsets, to guarantee correct stacking in Google Sheets.
+  let chartCol = 7; // Column G for charts
+  let chartRow = 2;
+  const chartPadding = 8; // rows to skip after each chart for guaranteed separation
+  function placeChartWithTitle(title, chartRange, chartType, chartRows, chartCols) {
+    // Place the title in the current row
+    summarySheet.getRange(chartRow, chartCol, 1, chartCols || 2).merge().setValue(title).setFontWeight("bold").setFontSize(12);
+    // Place the chart directly below the title, using row-based positioning
+    const chart = summarySheet.newChart()
+      .setChartType(chartType)
+      .addRange(chartRange)
+      .setPosition(chartRow + 1, chartCol, 0, 0)
+      .setOption('title', '')
+      .build();
+    summarySheet.insertChart(chart);
+    // Move chartRow pointer down by chartRows (height of chart) + title + padding
+    chartRow += chartRows + 1 + chartPadding;
+  }
+  if (orgEntries.length > 0) {
+    const pieChartRange = summarySheet.getRange(5, 2, orgEntries.length + 1, 2);
+    placeChartWithTitle("Report Counts by Org", pieChartRange, Charts.ChartType.PIE, Math.max(orgEntries.length + 8, 12));
+  }
+  if (failEntries.length > 0) {
+    const barChartRange = summarySheet.getRange(5 + orgEntries.length + 3, 2, Math.min(6, failEntries.length + 1), 2);
+    placeChartWithTitle("Top Failing IPs", barChartRange, Charts.ChartType.BAR, Math.max(Math.min(6, failEntries.length + 1) + 8, 12));
+  }
+  if (domainEntries.length > 0) {
+    const domainChartRange = summarySheet.getRange(rowPtr - domainEntries.length - 3, 2, Math.min(6, domainEntries.length + 1), 2);
+    placeChartWithTitle("Top Sending Domains", domainChartRange, Charts.ChartType.BAR, Math.max(Math.min(6, domainEntries.length + 1) + 8, 12));
+  }
+  // Pass/fail pie chart
+  const pfChartRange = summarySheet.getRange(rowPtr - 3, 2, 1, 4);
+  placeChartWithTitle("DKIM/SPF Pass/Fail", pfChartRange, Charts.ChartType.PIE, 12, 4);
+
+  // Auto-resize columns and rows for best fit (with extra width for long headers)
+  summarySheet.autoResizeColumns(1, summarySheet.getMaxColumns());
+  // Manually set minimum width for key columns to ensure full header visibility
+  summarySheet.setColumnWidth(2, 140); // B: e.g. 'Reporting Org', 'Failing IP', etc.
+  summarySheet.setColumnWidth(3, 120); // C: e.g. 'Report Count', 'Failure Count', etc.
+  summarySheet.setColumnWidth(4, 120); // D: e.g. 'SPF Pass', etc.
+  summarySheet.setColumnWidth(5, 120); // E: e.g. 'SPF Fail', etc.
+  summarySheet.autoResizeRows(1, summarySheet.getMaxRows());
+
+  // Always set tab colors after summary update (use American English: setTabColor)
+  try {
+    const dmarcSheet = ss.getSheetByName("DMARC Reports");
+    if (dmarcSheet) dmarcSheet.setTabColor("#4285F4");
+  } catch (e) {}
+  try {
+    if (summarySheet) summarySheet.setTabColor("#34A853");
+  } catch (e) {}
+}
+
+/**
+ * Add drill-down hyperlinks in the Summary sheet to jump to filtered data in DMARC Reports
+ */
+function addDrillDownLinksToSummary() {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const summary = ss.getSheetByName('Summary');
+  const reports = ss.getSheetByName('DMARC Reports');
+  if (!summary || !reports) return;
+  const data = summary.getDataRange().getValues();
+  // Add links for Reporting Org and Failing IP tables
+  for (let row = 6; row < data.length; row++) {
+    // Reporting Org links (col 2)
+    const org = data[row][1];
+    if (org && typeof org === 'string' && org !== '' && org !== 'Reporting Org') {
+      summary.getRange(row + 1, 2).setFormula(`=HYPERLINK("#gid=${reports.getSheetId()}&filter=Reporter:${org}", "${org}")`);
+    }
+    // Failing IP links (col 2, after org table)
+    if (data[row][1] && data[row][0] && data[row][0].match(/\d+\.\d+\.\d+\.\d+/)) {
+      const ip = data[row][0];
+      summary.getRange(row + 1, 2).setFormula(`=HYPERLINK("#gid=${reports.getSheetId()}&filter=Source IP:${ip}", "${ip}")`);
+    }
+  }
+}
+
+/**
+ * Create a Config sheet for settings (email recipients, retention, etc.)
+ */
+function setupConfigSheet() {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  let configSheet = ss.getSheetByName('Config');
+  if (!configSheet) {
+    configSheet = ss.insertSheet('Config');
+    configSheet.getRange(1, 1, 1, 2).setValues([["Setting", "Value"]]);
+    configSheet.getRange(2, 1, 1, 2).setValues([["Report Recipients (comma separated)", Session.getActiveUser().getEmail()]]);
+    configSheet.getRange(3, 1, 1, 2).setValues([["Retention Months", 12]]);
+    configSheet.getRange(1, 1, 1, 2).setBackground("#b7e1cd").setFontWeight("bold");
+    configSheet.setColumnWidths(1, 2, 260);
+    configSheet.setFrozenRows(1);
+    configSheet.setTabColor("#333333");
+  }
+}
+
+/**
+ * Purge/archive DMARC data older than the retention period set in Config sheet
+ */
+function purgeOldDMARCData() {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const configSheet = ss.getSheetByName('Config');
+  if (!configSheet) return;
+  const retentionMonths = parseInt(configSheet.getRange(3, 2).getValue(), 10) || 12;
+  const mainSheet = ss.getSheetByName('DMARC Reports');
+  if (!mainSheet) return;
+  const data = mainSheet.getDataRange().getValues();
+  if (data.length < 2) return;
+  const headers = data[0];
+  const dateCol = headers.indexOf('Processed Date');
+  const now = new Date();
+  const cutoff = new Date(now.getFullYear(), now.getMonth() - retentionMonths, now.getDate());
+  for (let i = data.length - 1; i > 0; i--) {
+    const rowDate = new Date(data[i][dateCol]);
+    if (rowDate < cutoff) {
+      mainSheet.deleteRow(i + 1);
+    }
+  }
+}
+
+// --- Add IP Country and Failure Reason columns to DMARC Reports sheet ---
+function enrichDMARCReportsWithGeoAndReason() {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const sheet = ss.getSheetByName("DMARC Reports");
+  if (!sheet) return;
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return;
+  const headers = data[0];
+  let ipCol = headers.indexOf("Source IP");
+  let dispCol = headers.indexOf("Disposition");
+  let dkimCol = headers.indexOf("DKIM");
+  let spfCol = headers.indexOf("SPF");
+  let countCol = headers.indexOf("Count");
+  // Add columns if not present
+  let countryCol = headers.indexOf("Country");
+  let reasonCol = headers.indexOf("Failure Reason");
+  let needHeaderUpdate = false;
+  if (countryCol === -1) { headers.push("Country"); countryCol = headers.length - 1; needHeaderUpdate = true; }
+  if (reasonCol === -1) { headers.push("Failure Reason"); reasonCol = headers.length - 1; needHeaderUpdate = true; }
+  if (needHeaderUpdate) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    // Always style the entire header row (including new columns) to match: light green, bold
+    var headerRange = sheet.getRange(1, 1, 1, sheet.getLastColumn());
+    headerRange.setBackground(null); // Clear any previous background
+    headerRange.setFontWeight("normal"); // Clear any previous font weight
+    headerRange.setBackground("#b7e1cd");
+    headerRange.setFontWeight("bold");
+
+    // Ensure all data columns (including new ones) have consistent number formatting and alignment
+    for (var col = 1; col <= sheet.getLastColumn(); col++) {
+      sheet.setColumnWidth(col, 120); // Set a reasonable default width for all columns
+      sheet.getRange(1, col, sheet.getLastRow()).setHorizontalAlignment("left");
+      sheet.getRange(1, col, sheet.getLastRow()).setVerticalAlignment("middle");
+      // Optionally, auto-resize columns for content
+      sheet.autoResizeColumn(col);
+    }
+  }
+  // Prepare to update rows
+  let updates = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const ip = row[ipCol];
+    const disp = row[dispCol];
+    const dkim = row[dkimCol];
+    const spf = row[spfCol];
+    const count = row[countCol];
+    // Failure Reason logic
+    let reason = "";
+    if (disp === "reject") {
+      if (dkim === "fail" && spf === "fail") reason = "Both DKIM and SPF failed. Message rejected.";
+      else if (dkim === "fail") reason = "DKIM failed. Message rejected.";
+      else if (spf === "fail") reason = "SPF failed. Message rejected.";
+      else reason = "Rejected for other policy reason.";
+    } else if (disp === "none") {
+      if (dkim === "fail" && spf === "fail") reason = "Both DKIM and SPF failed, but policy is 'none'. No action taken.";
+      else if (dkim === "fail") reason = "DKIM failed, but policy is 'none'. No action taken.";
+      else if (spf === "fail") reason = "SPF failed, but policy is 'none'. No action taken.";
+      else reason = "Passed authentication, no action taken.";
+    } else {
+      reason = `Disposition: ${disp}, DKIM: ${dkim}, SPF: ${spf}`;
+    }
+    // GeoIP lookup (ip-api.com, free, but rate-limited)
+    let country = row[countryCol] || "";
+    if (!country && ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+      try {
+        const response = UrlFetchApp.fetch(`http://ip-api.com/json/${ip}?fields=country`, {muteHttpExceptions:true, timeout:5});
+        const geo = JSON.parse(response.getContentText());
+        country = geo && geo.country ? geo.country : "Unknown";
+      } catch (e) { country = "Unknown"; }
+    }
+    // Prepare update
+    let updateRow = row.slice();
+    updateRow[countryCol] = country;
+    updateRow[reasonCol] = reason;
+    updates.push(updateRow);
+  }
+  // Write back enriched data
+  if (updates.length) {
+    sheet.getRange(2, 1, updates.length, headers.length).setValues(updates);
+    // Auto-resize new columns and all rows for visibility
+    sheet.autoResizeColumn(countryCol + 1);
+    sheet.autoResizeColumn(reasonCol + 1);
+    sheet.autoResizeRows(1, sheet.getLastRow());
+  }
+}
+
+/**
+ * Add a Documentation/Help sheet with usage, contact, and glossary
+ */
+function setupHelpSheet() {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  let helpSheet = ss.getSheetByName('Help');
+  if (!helpSheet) helpSheet = ss.insertSheet('Help');
+  helpSheet.clear();
+  helpSheet.getRange(1, 1).setValue('DMARC Reporting Tool - Help & Documentation').setFontWeight('bold').setFontSize(14);
+  helpSheet.getRange(3, 1).setValue('Usage Instructions:').setFontWeight('bold');
+  helpSheet.getRange(4, 1).setValue('1. DMARC reports are processed automatically from your Gmail.');
+  helpSheet.getRange(5, 1).setValue('2. The "DMARC Reports" sheet contains all parsed data.');
+  helpSheet.getRange(6, 1).setValue('3. The "Summary" and "Dashboard" sheets provide visual analytics.');
+  helpSheet.getRange(7, 1).setValue('4. The "Config" sheet lets you set report recipients, retention, and logo.');
+  helpSheet.getRange(8, 1).setValue('5. Data older than the retention period is purged automatically.');
+  helpSheet.getRange(10, 1).setValue('Contact:').setFontWeight('bold');
+  helpSheet.getRange(11, 1).setValue('For support, contact your IT administrator or security team.');
+  helpSheet.getRange(13, 1).setValue('Glossary:').setFontWeight('bold');
+  helpSheet.getRange(14, 1).setValue('DMARC: Domain-based Message Authentication, Reporting & Conformance');
+  helpSheet.getRange(15, 1).setValue('DKIM: DomainKeys Identified Mail');
+  helpSheet.getRange(16, 1).setValue('SPF: Sender Policy Framework');
+  helpSheet.getRange(17, 1).setValue('Disposition: The action taken on a message (none, reject, quarantine)');
+  helpSheet.setColumnWidth(1, 600);
+  helpSheet.setTabColor('#FFD700');
+}
+
+/**
+ * Add a Dashboard sheet with high-level KPIs and trendlines
+ */
+function setupDashboardSheet() {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  let dashboard = ss.getSheetByName('Dashboard');
+  if (!dashboard) dashboard = ss.insertSheet('Dashboard');
+  dashboard.clear();
+  dashboard.setTabColor('#000000');
+  dashboard.getRange(1, 1).setValue('DMARC Dashboard').setFontWeight('bold').setFontSize(16).setFontFamily('Arial').setFontColor('#000000').setBackground('#FFFFFF');
+  dashboard.getRange(2, 1).setValue('Key Metrics').setFontWeight('bold').setFontSize(12).setFontFamily('Arial').setFontColor('#000000');
+  // Pull summary stats from DMARC Reports
+  const reports = ss.getSheetByName('DMARC Reports');
+  if (!reports) return;
+  const data = reports.getDataRange().getValues();
+  if (data.length < 2) return;
+  const headers = data[0];
+  const countCol = headers.indexOf('Count');
+  const dkimCol = headers.indexOf('DKIM');
+  const spfCol = headers.indexOf('SPF');
+  let totalMsgs = 0, dkimFails = 0, spfFails = 0;
+  for (let i = 1; i < data.length; i++) {
+    totalMsgs += parseInt(data[i][countCol], 10) || 0;
+    if (data[i][dkimCol] === 'fail') dkimFails++;
+    if (data[i][spfCol] === 'fail') spfFails++;
+  }
+  dashboard.getRange(3, 1, 3, 2).setValues([
+    ['Total Messages', totalMsgs],
+    ['DKIM Failures', dkimFails],
+    ['SPF Failures', spfFails]
+  ]);
+  dashboard.getRange(3, 1, 3, 1).setFontWeight('bold').setFontFamily('Arial').setFontColor('#000000');
+  dashboard.getRange(3, 2, 3, 1).setFontFamily('Arial').setFontColor('#000000');
+  dashboard.getRange(1, 1, 6, 2).setBackground('#FFFFFF');
+  // Trendline chart for failures over time
+  const dateCol = headers.indexOf('Processed Date');
+  let trendData = {};
+  for (let i = 1; i < data.length; i++) {
+    const date = new Date(data[i][dateCol]);
+    const key = date.toISOString().slice(0, 10);
+    if (!trendData[key]) trendData[key] = { dkim: 0, spf: 0 };
+    if (data[i][dkimCol] === 'fail') trendData[key].dkim++;
+    if (data[i][spfCol] === 'fail') trendData[key].spf++;
+  }
+  const trendRows = Object.keys(trendData).sort().map(date => [date, trendData[date].dkim, trendData[date].spf]);
+  if (trendRows.length) {
+    dashboard.getRange(8, 1, 1, 3).setValues([["Date", "DKIM Failures", "SPF Failures"]]);
+    dashboard.getRange(8, 1, 1, 3).setFontWeight('bold').setFontFamily('Arial').setFontColor('#000000').setBackground('#e3e3e3');
+    dashboard.getRange(9, 1, trendRows.length, 3).setValues(trendRows);
+    dashboard.getRange(9, 1, trendRows.length, 3).setFontFamily('Arial').setFontColor('#000000');
+    // Add chart with legend and axis titles
+    const chart = dashboard.newChart()
+      .setChartType(Charts.ChartType.LINE)
+      .addRange(dashboard.getRange(8, 1, trendRows.length + 1, 3))
+      .setPosition(2, 4, 0, 0)
+      .setOption('title', 'Failures Over Time')
+      .setOption('legend', { position: 'right' })
+      .setOption('hAxis', { title: 'Date' })
+      .setOption('vAxis', { title: 'Failure Count' })
+      .build();
+    dashboard.insertChart(chart);
+    // Add a clear explanation above the chart
+    dashboard.getRange(6, 4).setValue('Chart: Blue = DKIM Failures, Red = SPF Failures').setFontColor('#1565c0').setFontSize(10).setFontWeight('bold');
+  }
+  dashboard.setColumnWidths(1, 4, 140);
+  dashboard.setFrozenRows(1);
+}
+
+function applyBranding() {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const dashboard = ss.getSheetByName('Dashboard');
+  const summary = ss.getSheetByName('Summary');
+  // Branding for Dashboard
+  if (dashboard) {
+    dashboard.getRange(1, 1, dashboard.getMaxRows(), dashboard.getMaxColumns())
+      .setFontFamily('Arial').setFontColor('#000000').setBackground('#FFFFFF');
+    // Remove all images from Dashboard
+    const dashboardImages = dashboard.getImages();
+    dashboardImages.forEach(function(img) { img.remove(); });
+    // Clear any previous logo/error message
+    dashboard.getRange(1, 7).clearContent();
+  }
+  // Branding for Summary
+  if (summary) {
+    summary.getRange(1, 1, summary.getMaxRows(), summary.getMaxColumns())
+      .setFontFamily('Arial').setFontColor('#000000').setBackground('#FFFFFF');
+    // Remove all images from Summary
+    const summaryImages = summary.getImages();
+    summaryImages.forEach(function(img) { img.remove(); });
+    // Clear any previous logo/error message
+    summary.getRange(1, 7).clearContent();
+  }
+}
+
+/**
+ * Scheduled email report: send PDF summary to recipients from Config
+ */
+function sendScheduledDMARCReport() {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const configSheet = ss.getSheetByName('Config');
+  if (!configSheet) return;
+  const recipients = configSheet.getRange(2, 2).getValue();
+  const summarySheet = ss.getSheetByName('Summary');
+  if (!summarySheet) return;
+  // Export summary as PDF
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=pdf&gid=${summarySheet.getSheetId()}&portrait=false&size=A4&fitw=true&sheetnames=false&printtitle=false&pagenumbers=false&gridlines=false&fzr=false`;
+  const token = ScriptApp.getOAuthToken();
+  const response = UrlFetchApp.fetch(url, {
+    headers: { Authorization: 'Bearer ' + token },
+    muteHttpExceptions: true
+  });
+  const blob = response.getBlob().setName('DMARC_Summary.pdf');
+  // Send email
+  MailApp.sendEmail({
+    to: recipients,
+    subject: 'Scheduled DMARC Report',
+    body: 'Please find attached the latest DMARC summary report.',
+    attachments: [blob]
   });
 }
