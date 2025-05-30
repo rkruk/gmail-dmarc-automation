@@ -31,7 +31,7 @@ This Google Apps Script automates the entire workflow of collecting, parsing, st
 
 - A Google account with access to Gmail and Google Drive
 - A Google Sheet to store DMARC data (create a new one or use an existing one)
-- Basic familiarity with Google Apps Script: .gs (for setup)
+- Basic familiarity with Google Apps Script (for setup)
 
 ---
 
@@ -45,21 +45,38 @@ This Google Apps Script automates the entire workflow of collecting, parsing, st
 - Open your Google Sheet.
 - Go to **Extensions → Apps Script**.
 - Paste the entire script into the editor, replacing any existing code.
-- At the top of the script, set the `spreadsheetId` variable to your Sheet's ID (The ID must be changed to the spredsheet ID used for DMARC tool: [https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID_HERE/edit?](https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID_HERE/edit?):
+- At the **very top of the script**, set the `spreadsheetId` variable to your Sheet's ID:
   ```js
   const spreadsheetId = "YOUR_SPREADSHEET_ID_HERE";
   ```
+- **You only need to update this variable in one place for new deployments.**
 
-### 3. Set Up Gmail Filter (Recommended)
-- In Gmail, create a filter to label all incoming DMARC reports:
-  - Go to **Settings → Filters and Blocked Addresses → Create a new filter**.
-  - In the "Has the words" field, enter:
+### 3. Set Up Gmail Filter and Label (Strongly Recommended)
+
+**Why is this important?**  
+The script relies on a Gmail label (default: `DMARC`) to find and process DMARC report emails. Proper labeling ensures:
+- Only DMARC reports are processed (no false positives).
+- Your inbox stays clean—DMARC emails are archived automatically.
+- The script can run on a schedule without manual intervention.
+
+**How to set up the filter:**
+
+1. In Gmail, go to **Settings → Filters and Blocked Addresses → Create a new filter**.
+2. In the "Has the words" field, enter:
     ```
     "Report domain:" OR DMARC OR "Aggregate report"
     ```
-  - Click "Create filter".
-  - Check "Apply the label" and select/create a label named `DMARC`.
-  - (Optional) Check "Skip the Inbox (Archive it)" to keep your inbox clean.
+3. Click **Create filter**.
+4. On the next screen, check:
+    - **Apply the label:** Select or create a label named `DMARC`
+    - **Skip the Inbox (Archive it)** (this keeps your inbox clean)
+5. Click **Create filter** to save.
+
+**Result:**  
+All incoming DMARC report emails will be labeled as `DMARC` and automatically archived. The script will process only these labeled emails, keeping your inbox uncluttered.
+
+> **Note:**  
+> If you use a different label name, update the `labelName` variable in the script accordingly.
 
 ### 4. Set Up Triggers
 - In the Apps Script editor, click the clock icon (Triggers) in the left sidebar.
@@ -125,6 +142,7 @@ This Google Apps Script automates the entire workflow of collecting, parsing, st
 - **Script not running?**
   - Check that triggers are set up correctly.
   - Make sure the Sheet ID is correct and you have permission.
+  - Ensure you updated the `spreadsheetId` variable at the top of the script.
 - **No DMARC emails found?**
   - Check your Gmail filter and label setup.
 - **Errors in parsing?**
@@ -159,12 +177,13 @@ See the [official quotas documentation](https://developers.google.com/apps-scrip
 - If you exceed a quota, the script will stop and resume the next day.
 - For most domains, DMARC report volume is well within free quotas.
 - Large organizations or high-volume domains may need a Google Workspace account for higher limits.
-  
+
 ---
 
 ## Credits
 
-Inspired by the need for a truly hands-off, robust DMARC automation tool for Google Workspace users.
+- Script developed and refined with the help of GitHub Copilot and the open-source community.
+- Inspired by the need for a truly hands-off, robust DMARC automation tool for Google Workspace users.
 
 ---
 
