@@ -1,4 +1,9 @@
-# Google Apps Script: Fully Automated DMARC Report Processor for Gmail & Google Sheets
+<div align="center">
+
+<h1>Google Apps Script:<br>
+Fully Automated DMARC Report Processor for Gmail & Google Sheets</h1>
+
+</div>
 
 ## Overview
 
