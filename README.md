@@ -218,7 +218,7 @@ See the [official quotas documentation](https://developers.google.com/apps-scrip
 
 ## Credits
 
-- Script developed and refined with the help of GitHub Copilot and the open-source community.
+- Script developed and refined with the help of the open-source community.
 - Inspired by the need for a truly hands-off, robust DMARC automation tool for Google Workspace users.
 
 ---
