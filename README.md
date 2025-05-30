@@ -1,5 +1,4 @@
-<h1 align="center">Google Apps Script:</h1>
-<h1 align="center">Fully Automated DMARC Report Processor for Gmail & Google Sheets</h1>
+# Google Apps Script: Fully Automated DMARC Report Processor for Gmail & Google Sheets
 
 ## Overview
 
@@ -233,3 +232,19 @@ This script is provided as-is, without warranty. You are free to use, modify, an
 ## Feedback & Contributions
 
 If you find this script useful or have suggestions, please open an issue or submit a pull request!
+
+---
+
+## Screenshots: Example Output
+
+Below are example screenshots of the tool's output in Google Sheets. (Sensitive data is pixelated.)
+
+**Summary Sheet:**
+![Summary Sheet 1](https://github.com/rkruk/gmail-dmarc-automation/blob/main/images/Screenshot_1.png)
+
+**Dashboard Sheet:**
+![Dashboard Sheet](https://github.com/rkruk/gmail-dmarc-automation/blob/main/images/Screenshot_3.png)
+
+**DMARC Reports Sheet:**
+![DMARC Reports Sheet](https://github.com/rkruk/gmail-dmarc-automation/blob/main/images/Screenshot_4.png)
+
